@@ -102,11 +102,8 @@ fn parse_input_spec(input: &str) -> Result<Vec<Item>> {
                 });
             } else {
                 let (name, len) = parse_vector_line(line)?;
-                items.push(Item::Vector {
-                    name,
-                    len,
-                    ty: Type::LongLong,
-                });
+                let ty = vector_type(&name);
+                items.push(Item::Vector { name, len, ty });
             }
             index += 1;
         } else {
@@ -252,6 +249,14 @@ fn parse_repeated_rows(start: &str, end: &str) -> Option<(String, Vec<(String, T
         ));
     }
     Some((len, columns))
+}
+
+fn vector_type(name: &str) -> Type {
+    if name.starts_with('S') {
+        Type::String
+    } else {
+        Type::LongLong
+    }
 }
 
 fn matrix_type(name: &str) -> Type {
@@ -465,6 +470,21 @@ mod tests {
         assert!(generated
             .code
             .contains("void solve(int N, const vector<long long>& A)"));
+    }
+
+    #[test]
+    fn generates_string_vector_input() {
+        let generated = generate_cpp(Some(
+            "H
+S_1 S_2 \\cdots S_H
+",
+        ));
+        assert!(generated.warning.is_none());
+        assert!(generated.code.contains("vector<string> S(H + 1);"));
+        assert!(generated.code.contains("cin >> S[i];"));
+        assert!(generated
+            .code
+            .contains("void solve(int H, const vector<string>& S)"));
     }
 
     #[test]
