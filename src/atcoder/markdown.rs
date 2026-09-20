@@ -3,6 +3,7 @@ use regex::{Captures, Regex};
 pub fn statement_html_to_markdown(html: String) -> String {
     let html = preserve_math(html);
     let markdown = html2md::parse_html(&html);
+    let markdown = normalize_closed_headings(markdown);
     trim_pre_block_trailing_blank_lines(normalize_markdown_math(markdown))
 }
 
@@ -64,6 +65,15 @@ fn decode_html_entities(text: &str) -> String {
         .replace("&#x27;", "'")
 }
 
+fn normalize_closed_headings(markdown: String) -> String {
+    let heading_re = Regex::new(r"(?m)^(#{1,6})\s+(.+?)\s+#+\s*$").unwrap();
+    heading_re
+        .replace_all(&markdown, |captures: &Captures<'_>| {
+            format!("{} {}", &captures[1], captures[2].trim_end())
+        })
+        .to_string()
+}
+
 fn normalize_markdown_math(markdown: String) -> String {
     let mut output = String::with_capacity(markdown.len());
     let mut index = 0;
@@ -116,4 +126,23 @@ fn trim_pre_block_trailing_blank_lines(markdown: String) -> String {
             format!("```\n{body}\n```")
         })
         .to_string()
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn removes_right_side_heading_markers() {
+        let markdown = normalize_closed_headings("### 問題文 ###
+text
+#### 入力例 1 ####
+".to_string());
+        assert!(markdown.contains("### 問題文
+"));
+        assert!(markdown.contains("#### 入力例 1
+"));
+        assert!(!markdown.contains("問題文 ###"));
+    }
 }
