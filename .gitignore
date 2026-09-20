@@ -1,0 +1,16 @@
+/target/
+/contests/
+.DS_Store
+*.swp
+*.swo
+*~
+main
+main_debug
+*.exe
+*.out
+*.log
+/.agents/
+/.codex/
+
+# Local documentation notes
+doc

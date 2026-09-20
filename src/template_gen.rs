@@ -1,0 +1,390 @@
+use anyhow::{anyhow, Result};
+
+#[derive(Debug, Clone)]
+pub struct GenerateResult {
+    pub code: String,
+    pub warning: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+enum Type {
+    Int,
+    LongLong,
+    String,
+}
+
+#[derive(Debug, Clone)]
+enum Item {
+    Scalar {
+        name: String,
+        ty: Type,
+    },
+    Vector {
+        name: String,
+        len: String,
+        ty: Type,
+    },
+    RepeatedRows {
+        len: String,
+        columns: Vec<(String, Type)>,
+    },
+}
+
+pub fn generate_cpp(input_format: Option<&str>) -> GenerateResult {
+    match input_format
+        .ok_or_else(|| anyhow!("input format was not found"))
+        .and_then(parse_input_spec)
+    {
+        Ok(items) => GenerateResult {
+            code: render_cpp(&items),
+            warning: None,
+        },
+        Err(error) => GenerateResult {
+            code: default_cpp(),
+            warning: Some(format!("{error}; generated default main.cpp")),
+        },
+    }
+}
+
+fn parse_input_spec(input: &str) -> Result<Vec<Item>> {
+    let lines = input
+        .lines()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        return Err(anyhow!("input format is empty"));
+    }
+
+    let mut items = Vec::new();
+    let first_vars = parse_plain_vars(lines[0])?;
+    for var in &first_vars {
+        items.push(Item::Scalar {
+            name: var.clone(),
+            ty: scalar_type(var),
+        });
+    }
+
+    let mut index = 1usize;
+    while index < lines.len() {
+        let line = lines[index];
+        if is_vector_line(line) {
+            let (name, len) = parse_vector_line(line)?;
+            items.push(Item::Vector {
+                name,
+                len,
+                ty: Type::LongLong,
+            });
+            index += 1;
+        } else if index + 2 < lines.len() && is_dots_line(lines[index + 1]) {
+            let Some((len, columns)) = parse_repeated_rows(line, lines[index + 2]) else {
+                return Err(anyhow!("unsupported repeated input format"));
+            };
+            items.push(Item::RepeatedRows { len, columns });
+            index += 3;
+        } else {
+            for var in parse_plain_vars(line)? {
+                items.push(Item::Scalar {
+                    name: var.clone(),
+                    ty: scalar_type(&var),
+                });
+            }
+            index += 1;
+        }
+    }
+
+    Ok(items)
+}
+
+fn parse_plain_vars(line: &str) -> Result<Vec<String>> {
+    let vars = line
+        .split_whitespace()
+        .filter(|token| is_ident(token))
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    if vars.is_empty() || vars.len() != line.split_whitespace().count() {
+        Err(anyhow!("unsupported scalar line: {line}"))
+    } else {
+        Ok(vars)
+    }
+}
+
+fn is_vector_line(line: &str) -> bool {
+    line.contains("...") || line.contains('…') || line.contains("\\cdots")
+}
+
+fn parse_vector_line(line: &str) -> Result<(String, String)> {
+    let tokens = line.split_whitespace().collect::<Vec<_>>();
+    if tokens.len() < 3
+        || !tokens
+            .iter()
+            .any(|token| matches!(*token, "..." | "…" | "\\cdots"))
+    {
+        return Err(anyhow!("unsupported vector line: {line}"));
+    }
+    let first = parse_subscripted(tokens[0])?;
+    let last = parse_subscripted(tokens[tokens.len() - 1])?;
+    if first.0 != last.0 {
+        return Err(anyhow!("vector endpoints use different names: {line}"));
+    }
+    Ok((first.0, last.1))
+}
+
+fn parse_repeated_rows(start: &str, end: &str) -> Option<(String, Vec<(String, Type)>)> {
+    let start_vars = start
+        .split_whitespace()
+        .map(parse_subscripted)
+        .collect::<Result<Vec<_>>>()
+        .ok()?;
+    let end_vars = end
+        .split_whitespace()
+        .map(parse_subscripted)
+        .collect::<Result<Vec<_>>>()
+        .ok()?;
+    if start_vars.len() != end_vars.len() || start_vars.is_empty() {
+        return None;
+    }
+    let len = end_vars[0].1.clone();
+    let mut columns = Vec::new();
+    for ((start_name, _), (end_name, end_index)) in start_vars.iter().zip(end_vars.iter()) {
+        if start_name != end_name || *end_index != len {
+            return None;
+        }
+        columns.push((
+            start_name.clone(),
+            repeated_type(start_name, start_vars.len()),
+        ));
+    }
+    Some((len, columns))
+}
+
+fn repeated_type(name: &str, column_count: usize) -> Type {
+    if column_count == 1 && name.starts_with('S') {
+        Type::String
+    } else {
+        Type::LongLong
+    }
+}
+
+fn parse_subscripted(token: &str) -> Result<(String, String)> {
+    let cleaned = token.trim_matches(|ch: char| ch == ',' || ch == '$');
+    let Some((name, index)) = cleaned.split_once('_') else {
+        return Err(anyhow!("expected subscripted variable: {token}"));
+    };
+    if !is_ident(name) {
+        return Err(anyhow!("invalid variable name: {name}"));
+    }
+    let index = index
+        .trim_start_matches('{')
+        .trim_end_matches('}')
+        .to_string();
+    if index.is_empty() {
+        return Err(anyhow!("empty subscript: {token}"));
+    }
+    if index.contains(',') {
+        return Err(anyhow!(
+            "multi-dimensional subscript is unsupported: {token}"
+        ));
+    }
+    Ok((name.to_string(), index))
+}
+
+fn is_dots_line(line: &str) -> bool {
+    matches!(line.trim(), "..." | "…" | "\\vdots" | ":" | "：")
+}
+
+fn is_ident(token: &str) -> bool {
+    let mut chars = token.chars();
+    chars.next().is_some_and(|ch| ch.is_ascii_alphabetic())
+        && chars.all(|ch| ch.is_ascii_alphanumeric())
+}
+
+fn scalar_type(name: &str) -> Type {
+    if matches!(name, "N" | "M" | "H" | "W" | "Q" | "K" | "T" | "D") {
+        Type::Int
+    } else if name.starts_with('S') {
+        Type::String
+    } else {
+        Type::LongLong
+    }
+}
+
+fn render_cpp(items: &[Item]) -> String {
+    let mut main_lines = Vec::new();
+    let mut args = Vec::new();
+    let mut call_args = Vec::new();
+
+    for item in items {
+        match item {
+            Item::Scalar { name, ty } => {
+                main_lines.push(format!("    {} {};", cpp_type(ty), name));
+                main_lines.push(format!("    cin >> {};", name));
+                args.push(format!("{} {}", cpp_type(ty), name));
+                call_args.push(name.clone());
+            }
+            Item::Vector { name, len, ty } => {
+                main_lines.push(format!(
+                    "    vector<{}> {}({} + 1);",
+                    cpp_type(ty),
+                    name,
+                    len
+                ));
+                main_lines.push(format!("    for (int i = 1; i <= {len}; i++) {{"));
+                main_lines.push(format!("        cin >> {name}[i];"));
+                main_lines.push("    }".to_string());
+                args.push(format!("const vector<{}>& {}", cpp_type(ty), name));
+                call_args.push(name.clone());
+            }
+            Item::RepeatedRows { len, columns } => {
+                for (name, ty) in columns {
+                    main_lines.push(format!(
+                        "    vector<{}> {}({} + 1);",
+                        cpp_type(ty),
+                        name,
+                        len
+                    ));
+                    args.push(format!("const vector<{}>& {}", cpp_type(ty), name));
+                    call_args.push(name.clone());
+                }
+                main_lines.push(format!("    for (int i = 1; i <= {len}; i++) {{"));
+                let row_read = columns
+                    .iter()
+                    .map(|(name, _)| format!("{name}[i]"))
+                    .collect::<Vec<_>>()
+                    .join(" >> ");
+                main_lines.push(format!("        cin >> {row_read};"));
+                main_lines.push("    }".to_string());
+            }
+        }
+    }
+
+    let solve_args = args.join(", ");
+    let call = call_args.join(", ");
+    let main_lines = main_lines.join("\n");
+
+    format!(
+        "{}\nusing namespace std;\n\nusing ll = long long;\nusing ull = unsigned long long;\nusing pii = pair<int, int>;\nusing pll = pair<ll, ll>;\n\ntemplate <class T>\nusing vec = vector<T>;\n\nvoid solve({solve_args}) {{\n    // TODO: implement\n}}\n\nint main() {{\n    ios::sync_with_stdio(false);\n    cin.tie(nullptr);\n\n{main_lines}\n\n    solve({call});\n    return 0;\n}}\n",
+        common_includes()
+    )
+}
+
+pub fn extract_input_format_from_markdown(markdown: &str) -> Option<String> {
+    let mut in_input_section = false;
+    let mut in_code_block = false;
+    let mut block = Vec::new();
+
+    for line in markdown.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            in_input_section = trimmed.contains("入力") || trimmed.contains("Input");
+            in_code_block = false;
+            block.clear();
+            continue;
+        }
+
+        if !in_input_section {
+            continue;
+        }
+
+        if trimmed.starts_with("```") {
+            if in_code_block {
+                return Some(block.join("\n"));
+            }
+            in_code_block = true;
+            block.clear();
+            continue;
+        }
+
+        if in_code_block {
+            block.push(line.to_string());
+        }
+    }
+
+    None
+}
+
+fn cpp_type(ty: &Type) -> &'static str {
+    match ty {
+        Type::Int => "int",
+        Type::LongLong => "long long",
+        Type::String => "string",
+    }
+}
+
+fn default_cpp() -> String {
+    format!(
+        "{}\nusing namespace std;\n\nusing ll = long long;\nusing ull = unsigned long long;\nusing pii = pair<int, int>;\nusing pll = pair<ll, ll>;\n\ntemplate <class T>\nusing vec = vector<T>;\n\nvoid solve() {{\n    // TODO: implement\n}}\n\nint main() {{\n    ios::sync_with_stdio(false);\n    cin.tie(nullptr);\n\n    // TODO: Fix input reading. The input format parser could not generate it automatically.\n    solve();\n    return 0;\n}}\n",
+        common_includes()
+    )
+}
+
+fn common_includes() -> &'static str {
+    "#include <bits/stdc++.h>"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generates_vector_input() {
+        let generated = generate_cpp(Some("N\nA_1 A_2 \\cdots A_N\n"));
+        assert!(generated.warning.is_none());
+        assert!(generated.code.contains("int N;"));
+        assert!(generated.code.contains("#include <bits/stdc++.h>"));
+        assert!(generated.code.contains("vector<long long> A(N + 1);"));
+        assert!(generated.code.contains("for (int i = 1; i <= N; i++)"));
+        assert!(generated.code.contains("cin >> A[i];"));
+        assert!(generated
+            .code
+            .contains("void solve(int N, const vector<long long>& A)"));
+    }
+
+    #[test]
+    fn generates_repeated_row_input() {
+        let generated = generate_cpp(Some("N\nA_1 B_1\n...\nA_N B_N\n"));
+        assert!(generated.warning.is_none());
+        assert!(generated.code.contains("vector<long long> A(N + 1);"));
+        assert!(generated.code.contains("vector<long long> B(N + 1);"));
+        assert!(generated.code.contains("cin >> A[i] >> B[i];"));
+    }
+
+    #[test]
+    fn generates_multiple_blocks() {
+        let generated = generate_cpp(Some("N Q\nA_1 A_2 \\cdots A_N\nL_1 R_1\n:\nL_Q R_Q\n"));
+        assert!(generated.warning.is_none());
+        assert!(generated.code.contains("int N;"));
+        assert!(generated.code.contains("int Q;"));
+        assert!(generated.code.contains("vector<long long> A(N + 1);"));
+        assert!(generated.code.contains("vector<long long> L(Q + 1);"));
+        assert!(generated.code.contains("vector<long long> R(Q + 1);"));
+        assert!(generated.code.contains("cin >> L[i] >> R[i];"));
+    }
+
+    #[test]
+    fn generates_scalar_lines_before_repeated_rows() {
+        let generated = generate_cpp(Some("D\nN\nL_1 R_1\n\\vdots\nL_N R_N\n"));
+        assert!(generated.warning.is_none());
+        assert!(generated.code.contains("int D;"));
+        assert!(generated.code.contains("int N;"));
+        assert!(generated.code.contains("vector<long long> L(N + 1);"));
+        assert!(generated.code.contains("vector<long long> R(N + 1);"));
+    }
+
+    #[test]
+    fn reads_scalars_before_allocating_vectors() {
+        let generated = generate_cpp(Some("N K\nP_1 P_2 \\cdots P_N\nQ_1 Q_2 \\cdots Q_N\n"));
+        assert!(generated.warning.is_none());
+        let read_n = generated.code.find("cin >> N;").unwrap();
+        let vector_p = generated.code.find("vector<long long> P(N + 1);").unwrap();
+        assert!(read_n < vector_p);
+    }
+
+    #[test]
+    fn falls_back_for_unsupported_input() {
+        let generated = generate_cpp(Some("N\nA_{1,1} ... A_{N,N}\n"));
+        assert!(generated.warning.is_some());
+        assert!(generated.code.contains("void solve()"));
+        assert!(generated.code.contains("TODO: Fix input reading"));
+    }
+}

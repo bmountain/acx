@@ -1,0 +1,26 @@
+{
+  "default_profile": "debug",
+  "solve": {
+    "command": "nvim -O {statement} {source}"
+  },
+  "template": {
+    "enabled_on_download": true,
+    "output": "main.cpp",
+    "overwrite": false,
+    "fallback_on_parse_error": true
+  },
+  "profiles": {
+    "debug": {
+      "source": "main.cpp",
+      "binary": "main_debug",
+      "build": "g++ -std=gnu++23 -O0 -g -Wall -Wextra -DLOCAL -fsanitize=address,undefined -fno-omit-frame-pointer -o {binary} {source}",
+      "run": "{binary}"
+    },
+    "release": {
+      "source": "main.cpp",
+      "binary": "main",
+      "build": "g++ -std=gnu++23 -O2 -Wall -Wextra -o {binary} {source}",
+      "run": "{binary}"
+    }
+  }
+}
