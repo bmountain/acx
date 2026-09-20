@@ -11,6 +11,7 @@ enum Type {
     Int,
     LongLong,
     String,
+    Char,
 }
 
 #[derive(Debug, Clone)]
@@ -27,6 +28,12 @@ enum Item {
     RepeatedRows {
         len: String,
         columns: Vec<(String, Type)>,
+    },
+    Matrix {
+        name: String,
+        rows: String,
+        cols: String,
+        ty: Type,
     },
 }
 
@@ -68,20 +75,40 @@ fn parse_input_spec(input: &str) -> Result<Vec<Item>> {
     let mut index = 1usize;
     while index < lines.len() {
         let line = lines[index];
-        if is_vector_line(line) {
-            let (name, len) = parse_vector_line(line)?;
-            items.push(Item::Vector {
-                name,
-                len,
-                ty: Type::LongLong,
-            });
-            index += 1;
-        } else if index + 2 < lines.len() && is_dots_line(lines[index + 1]) {
-            let Some((len, columns)) = parse_repeated_rows(line, lines[index + 2]) else {
-                return Err(anyhow!("unsupported repeated input format"));
-            };
-            items.push(Item::RepeatedRows { len, columns });
+        if index + 2 < lines.len() && is_dots_line(lines[index + 1]) {
+            if let Some((name, rows, cols)) = parse_matrix_rows(line, lines[index + 2]) {
+                let ty = matrix_type(&name);
+                items.push(Item::Matrix {
+                    name,
+                    rows,
+                    cols,
+                    ty,
+                });
+            } else {
+                let Some((len, columns)) = parse_repeated_rows(line, lines[index + 2]) else {
+                    return Err(anyhow!("unsupported repeated input format"));
+                };
+                items.push(Item::RepeatedRows { len, columns });
+            }
             index += 3;
+        } else if is_vector_line(line) {
+            if let Ok((name, rows, cols)) = parse_matrix_single_line(line) {
+                let ty = matrix_type(&name);
+                items.push(Item::Matrix {
+                    name,
+                    rows,
+                    cols,
+                    ty,
+                });
+            } else {
+                let (name, len) = parse_vector_line(line)?;
+                items.push(Item::Vector {
+                    name,
+                    len,
+                    ty: Type::LongLong,
+                });
+            }
+            index += 1;
         } else {
             for var in parse_plain_vars(line)? {
                 items.push(Item::Scalar {
@@ -130,6 +157,75 @@ fn parse_vector_line(line: &str) -> Result<(String, String)> {
     Ok((first.0, last.1))
 }
 
+fn parse_matrix_single_line(line: &str) -> Result<(String, String, String)> {
+    let tokens = line.split_whitespace().collect::<Vec<_>>();
+    if tokens.len() < 3
+        || !tokens
+            .iter()
+            .any(|token| matches!(*token, "..." | "…" | "\\cdots"))
+    {
+        return Err(anyhow!("unsupported matrix line: {line}"));
+    }
+    let first = parse_matrix_subscripted(tokens[0])?;
+    let last = parse_matrix_subscripted(tokens[tokens.len() - 1])?;
+    if first.name != last.name {
+        return Err(anyhow!("matrix endpoints use different names: {line}"));
+    }
+    Ok((first.name, last.row, last.col))
+}
+
+fn parse_matrix_rows(start: &str, end: &str) -> Option<(String, String, String)> {
+    let start_tokens = start.split_whitespace().collect::<Vec<_>>();
+    let end_tokens = end.split_whitespace().collect::<Vec<_>>();
+    let start_first = parse_matrix_subscripted(start_tokens.first()?).ok()?;
+    let start_last = parse_matrix_subscripted(start_tokens.last()?).ok()?;
+    let end_first = parse_matrix_subscripted(end_tokens.first()?).ok()?;
+    let end_last = parse_matrix_subscripted(end_tokens.last()?).ok()?;
+
+    if start_first.name != start_last.name
+        || start_first.name != end_first.name
+        || start_first.name != end_last.name
+    {
+        return None;
+    }
+    if start_first.row != start_last.row || end_first.row != end_last.row {
+        return None;
+    }
+    if start_first.col != end_first.col || start_last.col != end_last.col {
+        return None;
+    }
+    Some((start_first.name, end_first.row, start_last.col))
+}
+
+#[derive(Debug)]
+struct MatrixSubscript {
+    name: String,
+    row: String,
+    col: String,
+}
+
+fn parse_matrix_subscripted(token: &str) -> Result<MatrixSubscript> {
+    let cleaned = token.trim_matches(|ch: char| ch == ',' || ch == '$');
+    let Some((name, index)) = cleaned.split_once('_') else {
+        return Err(anyhow!("expected subscripted variable: {token}"));
+    };
+    if !is_ident(name) {
+        return Err(anyhow!("invalid variable name: {name}"));
+    }
+    let index = index.trim_start_matches('{').trim_end_matches('}');
+    let Some((row, col)) = index.split_once(',') else {
+        return Err(anyhow!("expected matrix subscript: {token}"));
+    };
+    if row.is_empty() || col.is_empty() {
+        return Err(anyhow!("empty matrix subscript: {token}"));
+    }
+    Ok(MatrixSubscript {
+        name: name.to_string(),
+        row: row.to_string(),
+        col: col.to_string(),
+    })
+}
+
 fn parse_repeated_rows(start: &str, end: &str) -> Option<(String, Vec<(String, Type)>)> {
     let start_vars = start
         .split_whitespace()
@@ -156,6 +252,14 @@ fn parse_repeated_rows(start: &str, end: &str) -> Option<(String, Vec<(String, T
         ));
     }
     Some((len, columns))
+}
+
+fn matrix_type(name: &str) -> Type {
+    if name == "C" {
+        Type::Char
+    } else {
+        Type::LongLong
+    }
 }
 
 fn repeated_type(name: &str, column_count: usize) -> Type {
@@ -255,6 +359,28 @@ fn render_cpp(items: &[Item]) -> String {
                 main_lines.push(format!("        cin >> {row_read};"));
                 main_lines.push("    }".to_string());
             }
+            Item::Matrix {
+                name,
+                rows,
+                cols,
+                ty,
+            } => {
+                main_lines.push(format!(
+                    "    vector<vector<{}>> {}({} + 1, vector<{}>({} + 1));",
+                    cpp_type(ty),
+                    name,
+                    rows,
+                    cpp_type(ty),
+                    cols
+                ));
+                main_lines.push(format!("    for (int i = 1; i <= {rows}; i++) {{"));
+                main_lines.push(format!("        for (int j = 1; j <= {cols}; j++) {{"));
+                main_lines.push(format!("            cin >> {name}[i][j];"));
+                main_lines.push("        }".to_string());
+                main_lines.push("    }".to_string());
+                args.push(format!("const vector<vector<{}>>& {}", cpp_type(ty), name));
+                call_args.push(name.clone());
+            }
         }
     }
 
@@ -308,6 +434,7 @@ fn cpp_type(ty: &Type) -> &'static str {
         Type::Int => "int",
         Type::LongLong => "long long",
         Type::String => "string",
+        Type::Char => "char",
     }
 }
 
@@ -381,8 +508,60 @@ mod tests {
     }
 
     #[test]
-    fn falls_back_for_unsupported_input() {
-        let generated = generate_cpp(Some("N\nA_{1,1} ... A_{N,N}\n"));
+    fn generates_single_line_matrix_input() {
+        let generated = generate_cpp(Some(
+            "N
+A_{1,1} ... A_{N,N}
+",
+        ));
+        assert!(generated.warning.is_none());
+        assert!(generated
+            .code
+            .contains("vector<vector<long long>> A(N + 1, vector<long long>(N + 1));"));
+        assert!(generated.code.contains("for (int i = 1; i <= N; i++)"));
+        assert!(generated.code.contains("for (int j = 1; j <= N; j++)"));
+        assert!(generated.code.contains("cin >> A[i][j];"));
+    }
+
+    #[test]
+    fn generates_matrix_rows_input() {
+        let generated = generate_cpp(Some(
+            "H W
+A_{1,1} ... A_{1,W}
+...
+A_{H,1} ... A_{H,W}
+",
+        ));
+        assert!(generated.warning.is_none());
+        assert!(generated
+            .code
+            .contains("vector<vector<long long>> A(H + 1, vector<long long>(W + 1));"));
+    }
+
+    #[test]
+    fn generates_char_matrix_for_c_grid() {
+        let generated = generate_cpp(Some(
+            "H W
+C_{1,1} ... C_{1,W}
+...
+C_{H,1} ... C_{H,W}
+",
+        ));
+        assert!(generated.warning.is_none());
+        assert!(generated
+            .code
+            .contains("vector<vector<char>> C(H + 1, vector<char>(W + 1));"));
+    }
+
+    #[test]
+    fn falls_back_for_variable_length_rows() {
+        let generated = generate_cpp(Some(
+            "N
+X_{1,1} ... X_{1,K_1}
+...
+X_{N,1} ... X_{N,K_N}
+",
+        ));
         assert!(generated.warning.is_some());
         assert!(generated.code.contains("void solve()"));
         assert!(generated.code.contains("TODO: Fix input reading"));
