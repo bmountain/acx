@@ -55,6 +55,12 @@ pub fn download(contest: &str, jobs: usize) -> Result<()> {
             completed += 1;
             match result {
                 Ok((task, problem)) => {
+                    let problem_path =
+                        fs_layout::problem_dir(&project_config.contests_dir, contest, &problem.id);
+                    progress.status(
+                        "Saving",
+                        format!("{} to {}", task.title, problem_path.display()),
+                    );
                     if let Err(error) = save_problem(
                         &project_root,
                         contest,
@@ -63,12 +69,16 @@ pub fn download(contest: &str, jobs: usize) -> Result<()> {
                         &project_config,
                         &progress,
                     ) {
-                        failures.push(format!("{}: {error:#}", problem.id));
+                        let failure = format!("{}: {error:#}", problem.id);
+                        progress.warning(format!("failed to download {failure}"));
+                        failures.push(failure);
                     }
                     progress.inc();
                 }
                 Err(error) => {
-                    failures.push(format!("{error:#}"));
+                    let failure = format!("{error:#}");
+                    progress.warning(format!("failed to download {failure}"));
+                    failures.push(failure);
                     progress.inc();
                 }
             }
@@ -76,10 +86,11 @@ pub fn download(contest: &str, jobs: usize) -> Result<()> {
     }
     progress.finish(format!("downloaded {completed}/{total} tasks"));
 
-    for failure in &failures {
-        ui::warn(format!("failed to download {failure}"));
-    }
     if !failures.is_empty() {
+        ui::error(format!(
+            "download finished with {} failures",
+            failures.len()
+        ));
         bail!("download finished with {} failures", failures.len());
     }
     Ok(())

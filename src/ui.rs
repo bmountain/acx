@@ -69,9 +69,9 @@ impl DownloadProgress {
         let bar = ProgressBar::new(total as u64);
         bar.set_draw_target(ProgressDrawTarget::stderr_with_hz(12));
         bar.set_style(
-            ProgressStyle::with_template("{msg}\n{bar:36.cyan/black} {pos}/{len}")
+            ProgressStyle::with_template("{msg}\n{wide_bar:.cyan/black} {pos}/{len}")
                 .expect("progress template should be valid")
-                .progress_chars("█▓░"),
+                .progress_chars("=> "),
         );
         bar.enable_steady_tick(Duration::from_millis(120));
         Ok(Self { bar })
