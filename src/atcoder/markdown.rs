@@ -66,7 +66,7 @@ fn decode_html_entities(text: &str) -> String {
 }
 
 fn normalize_closed_headings(markdown: String) -> String {
-    let heading_re = Regex::new(r"(?m)^(#{1,6})\s+(.+?)\s+#+\s*$").unwrap();
+    let heading_re = Regex::new(r"(?m)^(#{1,6})[ \t]+(.+?)[ \t]+#+[ \t]*$").unwrap();
     heading_re
         .replace_all(&markdown, |captures: &Captures<'_>| {
             format!("{} {}", &captures[1], captures[2].trim_end())
@@ -128,21 +128,27 @@ fn trim_pre_block_trailing_blank_lines(markdown: String) -> String {
         .to_string()
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn removes_right_side_heading_markers() {
-        let markdown = normalize_closed_headings("### 問題文 ###
+        let markdown = normalize_closed_headings(
+            "### 問題文 ###
 text
 #### 入力例 1 ####
-".to_string());
-        assert!(markdown.contains("### 問題文
-"));
-        assert!(markdown.contains("#### 入力例 1
-"));
+"
+            .to_string(),
+        );
+        assert!(markdown.contains(
+            "### 問題文
+"
+        ));
+        assert!(markdown.contains(
+            "#### 入力例 1
+"
+        ));
         assert!(!markdown.contains("問題文 ###"));
     }
 }
