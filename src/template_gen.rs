@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use regex::Regex;
 
 #[derive(Debug, Clone)]
 pub struct GenerateResult {
@@ -38,9 +39,17 @@ enum Item {
 }
 
 pub fn generate_cpp(input_format: Option<&str>) -> GenerateResult {
+    generate_cpp_with_constraints(input_format, None)
+}
+
+pub fn generate_cpp_with_constraints(
+    input_format: Option<&str>,
+    constraints: Option<&str>,
+) -> GenerateResult {
+    let type_context = TypeContext::from_constraints(constraints.unwrap_or(""));
     match input_format
         .ok_or_else(|| anyhow!("input format was not found"))
-        .and_then(parse_input_spec)
+        .and_then(|input| parse_input_spec(input, &type_context))
     {
         Ok(items) => GenerateResult {
             code: render_cpp(&items),
@@ -53,7 +62,61 @@ pub fn generate_cpp(input_format: Option<&str>) -> GenerateResult {
     }
 }
 
-fn parse_input_spec(input: &str) -> Result<Vec<Item>> {
+#[derive(Debug, Default)]
+struct TypeContext {
+    long_long_vars: Vec<String>,
+}
+
+impl TypeContext {
+    fn from_constraints(constraints: &str) -> Self {
+        let mut long_long_vars = Vec::new();
+        for line in constraints.lines() {
+            if !line_requires_long_long(line) {
+                continue;
+            }
+            for name in variable_names(line) {
+                if !long_long_vars.contains(&name) {
+                    long_long_vars.push(name);
+                }
+            }
+        }
+        Self { long_long_vars }
+    }
+
+    fn scalar_type(&self, name: &str) -> Type {
+        if self.long_long_vars.iter().any(|var| var == name) {
+            Type::LongLong
+        } else {
+            scalar_type(name)
+        }
+    }
+}
+
+fn line_requires_long_long(line: &str) -> bool {
+    let line = line.replace(' ', "");
+    Regex::new(r"10\^\{?(1[0-9]|[2-9][0-9])\}?")
+        .unwrap()
+        .is_match(&line)
+        || Regex::new(r"[1-9][0-9]{9,}").unwrap().is_match(&line)
+}
+
+fn variable_names(line: &str) -> Vec<String> {
+    Regex::new(r"[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+|_\{[^}]+\})?")
+        .unwrap()
+        .find_iter(line)
+        .filter_map(|mat| {
+            let token = mat.as_str();
+            let name = token.split_once('_').map_or(token, |(name, _)| name);
+            if is_ident(name) {
+                Some(name.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn parse_input_spec(input: &str, type_context: &TypeContext) -> Result<Vec<Item>> {
     let lines = input
         .lines()
         .map(|line| line.trim())
@@ -68,7 +131,7 @@ fn parse_input_spec(input: &str) -> Result<Vec<Item>> {
     for var in &first_vars {
         items.push(Item::Scalar {
             name: var.clone(),
-            ty: scalar_type(var),
+            ty: type_context.scalar_type(var),
         });
     }
 
@@ -110,7 +173,7 @@ fn parse_input_spec(input: &str) -> Result<Vec<Item>> {
             for var in parse_plain_vars(line)? {
                 items.push(Item::Scalar {
                     name: var.clone(),
-                    ty: scalar_type(&var),
+                    ty: type_context.scalar_type(&var),
                 });
             }
             index += 1;
@@ -399,6 +462,32 @@ fn render_cpp(items: &[Item]) -> String {
     )
 }
 
+pub fn extract_constraints_from_markdown(markdown: &str) -> Option<String> {
+    let mut in_constraints_section = false;
+    let mut lines = Vec::new();
+
+    for line in markdown.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            if in_constraints_section {
+                break;
+            }
+            in_constraints_section = trimmed.contains("制約") || trimmed.contains("Constraints");
+            continue;
+        }
+
+        if in_constraints_section && !trimmed.is_empty() {
+            lines.push(line.to_string());
+        }
+    }
+
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n"))
+    }
+}
+
 pub fn extract_input_format_from_markdown(markdown: &str) -> Option<String> {
     let mut in_input_section = false;
     let mut in_code_block = false;
@@ -571,6 +660,28 @@ C_{H,1} ... C_{H,W}
         assert!(generated
             .code
             .contains("vector<vector<char>> C(H + 1, vector<char>(W + 1));"));
+    }
+
+    #[test]
+    fn infers_long_long_scalar_from_constraints() {
+        let generated = generate_cpp_with_constraints(
+            Some("N W\n"),
+            Some("* $1 \\leq N \\leq 2 \\times 10^5$\n* $1 \\leq W \\leq 10^{18}$"),
+        );
+        assert!(generated.warning.is_none());
+        assert!(generated.code.contains("int N;"));
+        assert!(generated.code.contains("long long W;"));
+        assert!(generated.code.contains("void solve(int N, long long W)"));
+    }
+
+    #[test]
+    fn extracts_constraints_from_markdown() {
+        let constraints = extract_constraints_from_markdown(
+            "### 問題文\ntext\n### 制約\n* $1 \\leq W \\leq 10^{18}$\n### 入力\n```\nW\n```\n",
+        )
+        .unwrap();
+        assert!(constraints.contains("W"));
+        assert!(!constraints.contains("```"));
     }
 
     #[test]

@@ -23,11 +23,13 @@ pub fn template(args: &[String], force: bool) -> Result<()> {
     let statement = fs::read_to_string(&statement_path)
         .with_context(|| format!("failed to read statement: {}", statement_path.display()))?;
     let input_format = template_gen::extract_input_format_from_markdown(&statement);
+    let constraints = template_gen::extract_constraints_from_markdown(&statement);
 
     let report = write_template(
         &problem_dir,
         &config.template.output,
         input_format.as_deref(),
+        constraints.as_deref(),
         force || config.template.overwrite,
         &problem,
     )?;
@@ -56,6 +58,7 @@ pub fn write_template(
     problem_dir: &Path,
     output_name: &str,
     input_format: Option<&str>,
+    constraints: Option<&str>,
     overwrite: bool,
     problem_id: &str,
 ) -> Result<TemplateWriteReport> {
@@ -68,7 +71,7 @@ pub fn write_template(
         });
     }
 
-    let generated = template_gen::generate_cpp(input_format);
+    let generated = template_gen::generate_cpp_with_constraints(input_format, constraints);
     let warning = generated
         .warning
         .as_ref()

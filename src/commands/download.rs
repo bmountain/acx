@@ -1,6 +1,7 @@
 use crate::commands::template::write_template;
 use crate::models::{ContestMetadata, ContestTaskMetadata, Problem, ProblemMetadata, TaskSummary};
 use crate::project_config::ProjectConfig;
+use crate::template_gen;
 use crate::{atcoder::AtCoderClient, fs_layout, ui};
 use anyhow::{bail, Context, Result};
 use std::{fs, path::Path, thread};
@@ -193,10 +194,13 @@ fn save_problem(
     }
 
     if config.template.enabled_on_download {
+        let constraints =
+            template_gen::extract_constraints_from_markdown(&problem.statement_markdown);
         let report = write_template(
             &problem_dir,
             &config.template.output,
             problem.input_format.as_deref(),
+            constraints.as_deref(),
             config.template.overwrite,
             &problem.id,
         )?;
