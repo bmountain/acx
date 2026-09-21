@@ -8,9 +8,16 @@ use std::fs;
 
 pub fn test(args: &[String], profile_name: Option<&str>, case_filter: &[usize]) -> Result<()> {
     let (config, project_root) = ProjectConfig::load_from_current_dir()?;
-    let (contest, problem) = resolve_problem_target(args, &project_root, "test")?;
+    let (contest, problem) =
+        resolve_problem_target(args, &project_root, &config.contests_dir, "test")?;
     let (_, profile) = config.profile(profile_name)?;
-    let problem_dir = project_root.join(fs_layout::problem_dir(&contest, &problem));
+    let problem_dir = project_root.join(fs_layout::problem_dir(
+        &config.contests_dir,
+        &contest,
+        &problem,
+    ));
+    let metadata = read_problem_metadata(&problem_dir)?;
+    let test_dir = problem_dir.join(metadata.as_ref().map_or("test", |m| m.test_dir.as_str()));
     let build_plan = BuildPlan::new(&problem_dir, profile);
 
     println!(
@@ -21,11 +28,7 @@ pub fn test(args: &[String], profile_name: Option<&str>, case_filter: &[usize]) 
     println!("{}", build_plan.build_command());
     build_plan.build()?;
     println!("{}", style("Running tests").cyan().bold());
-    let report = run_test::run_test_cases(
-        &problem_dir.join("test"),
-        &build_plan.run_command,
-        case_filter,
-    )?;
+    let report = run_test::run_test_cases(&test_dir, &build_plan.run_command, case_filter)?;
     print_report(&report);
 
     if report.passed == report.total {
@@ -137,18 +140,25 @@ fn print_debug_command(run_command: &str, input_path: &std::path::Path) {
 }
 
 fn submit_url(contest: &str, problem_dir: &std::path::Path) -> Result<String> {
-    let metadata_path = problem_dir.join("metadata.json");
-    if !metadata_path.exists() {
+    let Some(metadata) = read_problem_metadata(problem_dir)? else {
         return Ok(format!("https://atcoder.jp/contests/{contest}/submit"));
-    }
-    let metadata = fs::read_to_string(&metadata_path)
-        .with_context(|| format!("failed to read metadata: {}", metadata_path.display()))?;
-    let metadata: ProblemMetadata = serde_json::from_str(&metadata)
-        .with_context(|| format!("failed to parse metadata: {}", metadata_path.display()))?;
+    };
     Ok(format!(
         "https://atcoder.jp/contests/{contest}/submit?taskScreenName={}",
         metadata.task_screen_name
     ))
+}
+
+fn read_problem_metadata(problem_dir: &std::path::Path) -> Result<Option<ProblemMetadata>> {
+    let metadata_path = problem_dir.join("metadata.json");
+    if !metadata_path.exists() {
+        return Ok(None);
+    }
+    let metadata = fs::read_to_string(&metadata_path)
+        .with_context(|| format!("failed to read metadata: {}", metadata_path.display()))?;
+    let metadata = serde_json::from_str(&metadata)
+        .with_context(|| format!("failed to parse metadata: {}", metadata_path.display()))?;
+    Ok(Some(metadata))
 }
 
 fn shell_arg(path: &std::path::Path) -> String {

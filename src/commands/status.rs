@@ -1,4 +1,4 @@
-use crate::commands::target::infer_contest_target;
+use crate::commands::target::resolve_contest_target;
 use crate::project_config::ProjectConfig;
 use crate::status as status_workflow;
 use anyhow::Result;
@@ -25,10 +25,7 @@ pub struct StatusOptions {
 }
 
 pub fn status(contest: Option<&str>, options: StatusOptions) -> Result<()> {
-    let (_, project_root) = ProjectConfig::load_from_current_dir()?;
-    let contest = match contest {
-        Some(contest) => contest.to_string(),
-        None => infer_contest_target(&project_root)?,
-    };
+    let (config, project_root) = ProjectConfig::load_from_current_dir()?;
+    let contest = resolve_contest_target(contest, &project_root, &config.contests_dir)?;
     status_workflow::print_contest_status(&contest, options)
 }

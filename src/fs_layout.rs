@@ -1,13 +1,13 @@
 use std::path::{Path, PathBuf};
 
-pub fn contest_dir(contest: &str) -> PathBuf {
-    Path::new("contests").join(contest)
+pub fn contest_dir(contests_dir: &str, contest: &str) -> PathBuf {
+    Path::new(contests_dir).join(contest)
 }
 
-pub fn problem_dir(contest: &str, problem: &str) -> PathBuf {
-    contest_dir(contest).join(problem)
+pub fn problem_dir(contests_dir: &str, contest: &str, problem: &str) -> PathBuf {
+    contest_dir(contests_dir, contest).join(problem)
 }
 
-pub fn test_dir(contest: &str, problem: &str) -> PathBuf {
-    problem_dir(contest, problem).join("test")
+pub fn test_dir(contests_dir: &str, contest: &str, problem: &str) -> PathBuf {
+    problem_dir(contests_dir, contest, problem).join("test")
 }

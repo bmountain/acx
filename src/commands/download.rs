@@ -1,5 +1,5 @@
 use crate::commands::template::write_template;
-use crate::models::{Problem, ProblemMetadata, TaskSummary};
+use crate::models::{ContestMetadata, ContestTaskMetadata, Problem, ProblemMetadata, TaskSummary};
 use crate::project_config::ProjectConfig;
 use crate::{atcoder::AtCoderClient, fs_layout, ui};
 use anyhow::{bail, Context, Result};
@@ -9,6 +9,7 @@ pub fn download(contest: &str, jobs: usize) -> Result<()> {
     let (project_config, project_root) = ProjectConfig::load_from_current_dir()?;
     let mut client = AtCoderClient::new()?;
     let tasks = client.contest_tasks(contest)?;
+    save_contest_metadata(&project_root, &project_config.contests_dir, contest, &tasks)?;
     let total = tasks.len();
     let jobs = jobs.max(1);
     let mut completed = 0usize;
@@ -74,6 +75,42 @@ pub fn download(contest: &str, jobs: usize) -> Result<()> {
     Ok(())
 }
 
+fn save_contest_metadata(
+    project_root: &Path,
+    contests_dir: &str,
+    contest: &str,
+    tasks: &[TaskSummary],
+) -> Result<()> {
+    let contest_dir = project_root.join(fs_layout::contest_dir(contests_dir, contest));
+    fs::create_dir_all(&contest_dir)
+        .with_context(|| format!("failed to create directory: {}", contest_dir.display()))?;
+    let metadata = ContestMetadata {
+        contest: contest.to_string(),
+        tasks: tasks
+            .iter()
+            .map(|task| ContestTaskMetadata {
+                id: task.id.clone(),
+                path: task.id.clone(),
+                task_screen_name: task.task_screen_name.clone(),
+                title: task.title.clone(),
+            })
+            .collect(),
+    };
+    let metadata_json =
+        serde_json::to_string_pretty(&metadata).context("failed to serialize contest metadata")?;
+    fs::write(
+        contest_dir.join("metadata.json"),
+        format!("{metadata_json}\n"),
+    )
+    .with_context(|| {
+        format!(
+            "failed to write contest metadata: {}",
+            contest_dir.display()
+        )
+    })?;
+    Ok(())
+}
+
 fn save_problem(
     project_root: &Path,
     contest: &str,
@@ -82,8 +119,16 @@ fn save_problem(
     config: &ProjectConfig,
     progress: &ui::DownloadProgress,
 ) -> Result<()> {
-    let problem_dir = project_root.join(fs_layout::problem_dir(contest, &problem.id));
-    let test_dir = project_root.join(fs_layout::test_dir(contest, &problem.id));
+    let problem_dir = project_root.join(fs_layout::problem_dir(
+        &config.contests_dir,
+        contest,
+        &problem.id,
+    ));
+    let test_dir = project_root.join(fs_layout::test_dir(
+        &config.contests_dir,
+        contest,
+        &problem.id,
+    ));
     fs::create_dir_all(&test_dir)
         .with_context(|| format!("failed to create directory: {}", test_dir.display()))?;
     remove_old_test_cases(&test_dir)?;
@@ -96,8 +141,16 @@ fn save_problem(
     let metadata = ProblemMetadata {
         contest: contest.to_string(),
         id: problem.id.clone(),
+        path: problem.id.clone(),
         task_screen_name: task.task_screen_name.clone(),
         title: task.title.clone(),
+        statement: "statement.md".to_string(),
+        source: config
+            .profiles
+            .get(&config.default_profile)
+            .map(|profile| profile.source.clone())
+            .unwrap_or_else(|| "main.cpp".to_string()),
+        test_dir: "test".to_string(),
     };
     let metadata_json =
         serde_json::to_string_pretty(&metadata).context("failed to serialize metadata")?;

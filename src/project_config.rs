@@ -10,6 +10,8 @@ pub const PROJECT_CONFIG_FILE: &str = "acx.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectConfig {
+    #[serde(default = "default_contests_dir")]
+    pub contests_dir: String,
     pub default_profile: String,
     #[serde(default)]
     pub solve: SolveConfig,
@@ -37,6 +39,10 @@ pub struct TemplateConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SolveConfig {
     pub command: String,
+}
+
+fn default_contests_dir() -> String {
+    "contests".to_string()
 }
 
 impl Default for SolveConfig {
@@ -109,6 +115,7 @@ impl Default for ProjectConfig {
         );
 
         Self {
+            contests_dir: default_contests_dir(),
             default_profile: "debug".to_string(),
             solve: SolveConfig::default(),
             template: TemplateConfig::default(),

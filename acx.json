@@ -1,4 +1,5 @@
 {
+  "contests_dir": "contests",
   "default_profile": "debug",
   "solve": {
     "command": "nvim -O {statement} {source}"
