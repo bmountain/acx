@@ -35,7 +35,7 @@ pub fn solve(args: &[String]) -> Result<()> {
         .replace("{statement}", &shell_arg(&statement))
         .replace("{source}", &shell_arg(&source));
 
-    ui::info(format!("Opening {}", problem_dir.display()));
+    ui::action("Opening", problem_dir.display().to_string());
     let status = Command::new("sh")
         .arg("-c")
         .arg(&command)

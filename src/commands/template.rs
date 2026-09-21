@@ -47,7 +47,7 @@ impl TemplateWriteReport {
             ui::warn(warning);
         }
         if self.written {
-            ui::info(format!("Generated {}", self.output_path.display()));
+            ui::success("Generated", self.output_path.display().to_string());
         }
     }
 }

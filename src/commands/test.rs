@@ -5,6 +5,7 @@ use crate::{builder::BuildPlan, fs_layout, run_test, ui};
 use anyhow::{bail, Context, Result};
 use console::style;
 use std::fs;
+use std::path::Path;
 
 pub fn test(args: &[String], profile_name: Option<&str>, case_filter: &[usize]) -> Result<()> {
     let (config, project_root) = ProjectConfig::load_from_current_dir()?;
@@ -20,28 +21,20 @@ pub fn test(args: &[String], profile_name: Option<&str>, case_filter: &[usize]) 
     let test_dir = problem_dir.join(metadata.as_ref().map_or("test", |m| m.test_dir.as_str()));
     let build_plan = BuildPlan::new(&problem_dir, profile);
 
-    println!(
-        "{} {}",
-        style("Building").cyan().bold(),
-        build_plan.source.display()
-    );
-    println!("{}", build_plan.build_command());
+    ui::action("Building", build_plan.source.display().to_string());
+    ui::note("Command", build_plan.build_command());
     build_plan.build()?;
-    println!("{}", style("Running tests").cyan().bold());
+    ui::action("Running", "test cases");
     let report = run_test::run_test_cases(&test_dir, &build_plan.run_command, case_filter)?;
     print_report(&report);
 
     if report.passed == report.total {
         println!();
-        ui::success(format!(
-            "All tests passed: {}/{}",
-            report.passed, report.total
-        ));
-        println!(
-            "{} {}",
-            style("Submit URL").cyan().bold(),
-            submit_url(&contest, &problem_dir)?
+        ui::success(
+            "Finished",
+            format!("all tests passed: {}/{}", report.passed, report.total),
         );
+        ui::note("Submit URL", submit_url(&contest, &problem_dir)?);
         return Ok(());
     }
 
@@ -51,6 +44,7 @@ pub fn test(args: &[String], profile_name: Option<&str>, case_filter: &[usize]) 
         print_debug_command(&build_plan.run_command, &failure.input_path);
     }
 
+    ui::error(format!("tests failed: {}/{}", report.passed, report.total));
     bail!("tests failed: {}/{}", report.passed, report.total)
 }
 
@@ -133,10 +127,13 @@ fn print_diff(expected: &str, actual: &str) {
     }
 }
 
-fn print_debug_command(run_command: &str, input_path: &std::path::Path) {
-    println!("{}", style("To debug with gdb:").cyan().bold());
-    println!("gdb --args {run_command}");
-    println!("(gdb) run < {}", shell_arg(input_path));
+fn print_debug_command(run_command: &str, input_path: &Path) {
+    let replay = format!("exec {run_command} < {}", shell_arg(input_path));
+    ui::note(
+        "Debug",
+        format!("gdb --args sh -c {}", shell_arg_text(&replay)),
+    );
+    ui::note("", "then run: run");
 }
 
 fn submit_url(contest: &str, problem_dir: &std::path::Path) -> Result<String> {
@@ -164,4 +161,8 @@ fn read_problem_metadata(problem_dir: &std::path::Path) -> Result<Option<Problem
 fn shell_arg(path: &std::path::Path) -> String {
     let text = path.to_string_lossy();
     format!("'{}'", text.replace('\'', "'\\''"))
+}
+
+fn shell_arg_text(text: &str) -> String {
+    format!("'{}'", text.replace("'", "'\\''"))
 }

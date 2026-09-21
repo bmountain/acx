@@ -1,25 +1,63 @@
 use anyhow::Result;
 use console::style;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
-use std::time::Duration;
+use std::{io::Write, time::Duration};
 
-pub fn info(message: impl AsRef<str>) {
-    println!("{}", message.as_ref());
+const LABEL_WIDTH: usize = 12;
+
+pub fn action(label: &str, message: impl AsRef<str>) {
+    println!(
+        "{} {}",
+        style(format_label(label)).cyan().bold(),
+        message.as_ref()
+    );
+    flush_stdout();
+}
+
+pub fn success(label: &str, message: impl AsRef<str>) {
+    println!(
+        "{} {}",
+        style(format_label(label)).green().bold(),
+        message.as_ref()
+    );
+    flush_stdout();
 }
 
 pub fn warn(message: impl AsRef<str>) {
     eprintln!(
-        "{}",
-        style(format!("warning: {}", message.as_ref())).yellow()
+        "{} {}",
+        style(format_label("Warning")).yellow().bold(),
+        message.as_ref()
     );
 }
 
-pub fn success(message: impl AsRef<str>) {
-    println!("{}", style(message.as_ref()).green());
+pub fn error(message: impl AsRef<str>) {
+    eprintln!(
+        "{} {}",
+        style(format_label("Error")).red().bold(),
+        message.as_ref()
+    );
 }
 
 pub fn caution(message: impl AsRef<str>) {
-    eprintln!("{}", style(message.as_ref()).yellow());
+    eprintln!(
+        "{} {}",
+        style(format_label("Warning")).yellow().bold(),
+        message.as_ref()
+    );
+}
+
+pub fn note(label: &str, message: impl AsRef<str>) {
+    println!("{} {}", style(format_label(label)).dim(), message.as_ref());
+    flush_stdout();
+}
+
+fn format_label(label: &str) -> String {
+    format!("{label:>LABEL_WIDTH$}")
+}
+
+fn flush_stdout() {
+    let _ = std::io::stdout().flush();
 }
 
 pub struct DownloadProgress {
@@ -31,7 +69,7 @@ impl DownloadProgress {
         let bar = ProgressBar::new(total as u64);
         bar.set_draw_target(ProgressDrawTarget::stderr_with_hz(12));
         bar.set_style(
-            ProgressStyle::with_template("{msg}\n{bar:32.cyan/black} {pos}/{len}")
+            ProgressStyle::with_template("{msg}\n{bar:36.cyan/black} {pos}/{len}")
                 .expect("progress template should be valid")
                 .progress_chars("█▓░"),
         );
@@ -39,23 +77,39 @@ impl DownloadProgress {
         Ok(Self { bar })
     }
 
-    pub fn status(&self, message: impl Into<String>) {
-        self.bar.set_message(message.into());
+    pub fn status(&self, label: &str, message: impl AsRef<str>) {
+        self.bar.set_message(format!(
+            "{} {}",
+            style(format_label(label)).cyan().bold(),
+            message.as_ref()
+        ));
+    }
+
+    pub fn success(&self, label: &str, message: impl AsRef<str>) {
+        self.bar.set_message(format!(
+            "{} {}",
+            style(format_label(label)).green().bold(),
+            message.as_ref()
+        ));
     }
 
     pub fn warning(&self, message: impl AsRef<str>) {
-        self.bar.set_message(
-            style(format!("warning: {}", message.as_ref()))
-                .yellow()
-                .to_string(),
-        );
+        self.bar.set_message(format!(
+            "{} {}",
+            style(format_label("Warning")).yellow().bold(),
+            message.as_ref()
+        ));
     }
 
     pub fn inc(&self) {
         self.bar.inc(1);
     }
 
-    pub fn finish(&self, message: impl Into<String>) {
-        self.bar.finish_with_message(message.into());
+    pub fn finish(&self, message: impl AsRef<str>) {
+        self.bar.finish_with_message(format!(
+            "{} {}",
+            style(format_label("Finished")).green().bold(),
+            message.as_ref()
+        ));
     }
 }

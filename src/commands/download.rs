@@ -15,13 +15,23 @@ pub fn download(contest: &str, jobs: usize) -> Result<()> {
     let mut completed = 0usize;
     let mut failures = Vec::new();
     let progress = ui::DownloadProgress::new(total)?;
-    progress.status(format!("Preparing {total} tasks with {jobs} jobs"));
+    progress.status(
+        "Downloading",
+        format!("{contest} {total} tasks with {jobs} jobs"),
+    );
     for chunk in tasks.chunks(jobs) {
         let current_message = chunk
             .first()
-            .map(|task| format!("Downloading \"{}\"", task.title))
-            .unwrap_or_else(|| "Downloading".to_string());
-        progress.status(current_message.clone());
+            .map(|task| {
+                format!(
+                    "{} to {}",
+                    task.title,
+                    fs_layout::problem_dir(&project_config.contests_dir, contest, &task.id)
+                        .display()
+                )
+            })
+            .unwrap_or_else(|| contest.to_string());
+        progress.status("Fetching", current_message);
         let fetched = thread::scope(|scope| {
             chunk
                 .iter()
@@ -64,7 +74,7 @@ pub fn download(contest: &str, jobs: usize) -> Result<()> {
             }
         }
     }
-    progress.finish(format!("Downloaded {completed} tasks."));
+    progress.finish(format!("downloaded {completed}/{total} tasks"));
 
     for failure in &failures {
         ui::warn(format!("failed to download {failure}"));
@@ -183,7 +193,7 @@ fn save_problem(
             progress.warning(warning);
         }
         if report.written {
-            progress.status(format!("Generated {}", report.output_path.display()));
+            progress.success("Generated", report.output_path.display().to_string());
         }
     }
 
